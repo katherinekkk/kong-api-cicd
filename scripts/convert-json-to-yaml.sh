@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
 
-mkdir -p output
+echo "Converting JSON to YAML..."
 
 for file in apis/*.json; do
-  name=$(basename "$file" .json)
-  yq -P "$file" > output/$name.yaml
+  filename=$(basename "$file" .json)
+  yq -P "$file" > "apis/$filename.yaml"
+  echo "Created apis/$filename.yaml"
 done
-
-echo "Conversion completed"
