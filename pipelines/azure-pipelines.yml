@@ -2,61 +2,56 @@ trigger:
 - main
 
 pool:
-  name: Default   # self-hosted agent
+  name: Default
 
 stages:
 
 # ---------- Stage 1 Validate ----------
 - stage: Validate
-  displayName: "Validate API JSON"
   jobs:
   - job: ValidateJSON
     steps:
     - checkout: self
-
-    - script: |
-        echo "Validating JSON files..."
-        bash scripts/validate-json.sh apis/demo-api.json schemas/kong-api-schema.json
-      displayName: "Validate JSON schema"
-
+    - script: bash scripts/validate-json.sh
+      displayName: Validate API JSON
 
 # ---------- Stage 2 Convert ----------
 - stage: Convert
-  displayName: "Convert JSON to YAML"
   dependsOn: Validate
   jobs:
   - job: ConvertToYAML
     steps:
     - checkout: self
 
+    # Convert JSON → YAML
     - script: |
-        echo "Converting JSON → YAML"
-        bash scripts/convert-json-to-yaml.sh apis/demo-api.json apis/demo-api.yaml
-      displayName: "Convert JSON to YAML"
+        echo "Converting JSON to YAML"
+        yq -p=json -o=yaml apis/demo-api.json > apis/demo-api.yaml
+      displayName: Convert JSON to YAML
 
-    # Upgrade format version to Kong Gateway 3.x
+    # Upgrade decK format to Kong 3.x
     - script: |
         echo "Upgrading config to Kong 3.x format"
-        deck convert --from kong-gateway-2.x --to kong-gateway-3.x apis/demo-api.yaml -o apis/demo-api.yaml
-      displayName: "Upgrade decK format to Kong 3.x"
+        deck convert \
+          --from kong-gateway-2.x \
+          --to kong-gateway-3.x \
+          --input-file apis/demo-api.yaml \
+          --output-file apis/demo-api.yaml
+      displayName: Upgrade decK format to Kong 3.x
 
     - publish: apis
       artifact: converted-apis
 
-
 # ---------- Stage 3 Deploy ----------
 - stage: Deploy
-  displayName: "Deploy to Kong"
   dependsOn: Convert
   jobs:
   - job: DeployToKong
     steps:
-    - checkout: self
-
     - download: current
       artifact: converted-apis
 
     - script: |
-        echo "Deploying to Kong using decK…"
+        echo "Deploying to Kong"
         deck gateway sync apis/demo-api.yaml
-      displayName: "Deploy APIs to Kong using decK"
+      displayName: Deploy APIs to Kong using decK
