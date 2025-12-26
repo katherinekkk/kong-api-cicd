@@ -1,0 +1,15 @@
+{
+  "services": [
+    {
+      "name": "demo-service",
+      "url": "http://httpbin.org"
+    }
+  ],
+  "routes": [
+    {
+      "name": "demo-route",
+      "service": "demo-service",
+      "paths": ["/demo"]
+    }
+  ]
+}
