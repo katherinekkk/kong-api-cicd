@@ -4,9 +4,8 @@ trigger:
 pool:
   name: Default
 
-stages:
 
-# -------- Stage 1 --------
+# ========== Stage 1 ==========
 - stage: Validate
   displayName: Validate API JSON
   jobs:
@@ -23,7 +22,7 @@ stages:
       displayName: Validate JSON files
 
 
-# -------- Stage 2 --------
+# ========== Stage 2 ==========
 - stage: Convert
   dependsOn: Validate
   displayName: Convert JSON to YAML
@@ -33,7 +32,9 @@ stages:
     - checkout: self
 
     - script: |
+        rm -rf converted-apis
         mkdir -p converted-apis
+
         echo "Converting JSON → YAML ..."
         for f in apis/*.json; do
           name=$(basename "$f" .json)
@@ -47,10 +48,10 @@ stages:
       displayName: Publish converted YAML
 
 
-# -------- Stage 3 --------
+# ========== Stage 3 ==========
 - stage: Upgrade
   dependsOn: Convert
-  displayName: Upgrade decK format to Kong 3.x
+  displayName: Upgrade config to Kong 3.x
   jobs:
   - job: UpgradeFormat
     steps:
@@ -59,26 +60,26 @@ stages:
       artifact: converted-apis
 
     - script: |
-        echo "Upgrading YAML files to Kong 3.x ..."
+        rm -rf upgraded-apis
         mkdir -p upgraded-apis
 
+        echo "Upgrading to Kong 3.x format..."
         for f in "$(Pipeline.Workspace)"/converted-apis/*.yaml; do
-          name=$(basename "$f")
-          echo "Upgrading $name"
+          name=$(basename "$f" .yaml)
           deck file convert \
             --from kong-gateway-2.x \
             --to kong-gateway-3.x \
             --input-file "$f" \
-            --output-file "upgraded-apis/$name"
+            --output-file "upgraded-apis/${name}-3x.yaml"
         done
-      displayName: Upgrade configuration to Kong 3.x
+      displayName: Upgrade decK format to Kong 3.x
 
     - publish: upgraded-apis
       artifact: upgraded-apis
       displayName: Publish upgraded configs
 
 
-# -------- Stage 4 --------
+# ========== Stage 4 ==========
 - stage: Deploy
   dependsOn: Upgrade
   displayName: Deploy to Kong
@@ -90,12 +91,12 @@ stages:
       artifact: upgraded-apis
 
     - script: |
-        echo "Files to deploy:"
+        echo "Final deploy folder:"
         ls -l "$(Pipeline.Workspace)/upgraded-apis"
 
-        echo "Pinging Kong..."
+        echo "Testing connection..."
         deck gateway ping
 
-        echo "Deploying APIs to Kong..."
+        echo "Deploying ONLY 3.x files..."
         deck gateway sync "$(Pipeline.Workspace)/upgraded-apis"
       displayName: Deploy APIs using decK
