@@ -2,60 +2,51 @@ trigger:
 - main
 
 pool:
-  name: Default    # your self-hosted agent
+  name: Default    # self-hosted agent
 
 stages:
 
 # ---------------------- 1) VALIDATE JSON ----------------------
 - stage: Validate
-  displayName: Validate JSON APIs
   jobs:
   - job: ValidateJSON
     steps:
     - checkout: self
-
     - script: |
-        echo "Running JSON validation..."
+        echo "Validating JSON files..."
         bash scripts/validate-json.sh
-      displayName: Validate JSON files
+      displayName: Validate JSON
 
 
-# ---------------------- 2) CONVERT JSON TO YAML ----------------------
+# ---------------------- 2) CONVERT JSON → YAML ----------------------
 - stage: Convert
   dependsOn: Validate
-  displayName: Convert JSON → YAML
   jobs:
   - job: ConvertToYAML
     steps:
     - checkout: self
-
     - script: |
-        echo "Converting JSON to YAML..."
+        echo "Converting JSON → YAML..."
         bash scripts/convert-json-to-yaml.sh
       displayName: Convert JSON to YAML
-
     - publish: apis
       artifact: converted-apis
-      displayName: Publish converted APIs
 
 
-# ---------------------- 3) UPGRADE FORMAT TO KONG 3.X ----------------------
+# ---------------------- 3) UPGRADE TO KONG 3.x ----------------------
 - stage: Upgrade
   dependsOn: Convert
-  displayName: Upgrade to Kong 3.x format
   jobs:
   - job: UpgradeConfig
     steps:
     - checkout: self
-
     - download: current
       artifact: converted-apis
 
     - script: |
-        echo "Creating upgraded-apis directory..."
         mkdir upgraded-apis
 
-        echo "Upgrading all YAML files to Kong 3.x format..."
+        echo "Upgrading all files to Kong 3.x format…"
 
         for f in $(Pipeline.Workspace)/converted-apis/*.yaml; do
           base=$(basename "$f" .yaml)
@@ -68,9 +59,8 @@ stages:
             --input-file "$f" \
             --output-file upgraded-apis/${base}-3x.yaml
 
-          # ensure workspace exists (fixes empty config error)
+          # Guarantee workspace exists (prevents EMPTY CONFIG error)
           if ! grep -q "_workspace" upgraded-apis/${base}-3x.yaml; then
-            echo "Adding workspace default to ${base}-3x.yaml"
             echo "_workspace: default" | cat - upgraded-apis/${base}-3x.yaml > tmp && mv tmp upgraded-apis/${base}-3x.yaml
           fi
 
@@ -78,32 +68,31 @@ stages:
 
         echo "Final upgraded files:"
         ls -l upgraded-apis
-      displayName: Upgrade decK config to Kong 3.x
+      displayName: Upgrade decK config format
 
     - publish: upgraded-apis
       artifact: upgraded-apis
-      displayName: Publish upgraded APIs
 
 
-# ---------------------- 4) DEPLOY TO KONG USING DECK ----------------------
+# ---------------------- 4) DEPLOY TO KONG ----------------------
 - stage: Deploy
   dependsOn: Upgrade
-  displayName: Deploy to Kong Gateway
   jobs:
   - job: DeployToKong
     steps:
     - checkout: self
-
     - download: current
       artifact: upgraded-apis
 
     - script: |
-        echo "Available files for deployment:"
-        ls -l $(Pipeline.Workspace)/upgraded-apis
-
-        echo "Testing deck connection..."
+        echo "Checking connection to Kong…"
         deck gateway ping
 
-        echo "Deploying using deck gateway sync..."
-        deck gateway sync $(Pipeline.Workspace)/upgraded-apis
+        echo "RESETTING default workspace to avoid duplicate entity errors…"
+        deck gateway reset --workspace default --yes
+
+        echo "Deploying APIs…"
+        deck gateway sync $(Pipeline.Workspace)/upgraded-apis --yes
+
+        echo "Deployment complete."
       displayName: Deploy APIs to Kong using decK
