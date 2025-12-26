@@ -2,21 +2,28 @@ trigger:
 - main
 
 pool:
-  name: Default   # self-hosted agent
+  name: Default   # your self-hosted agent pool
 
 stages:
 
-# ---------------- Stage 1 Validate JSON ----------------
+# -------------------- Stage 1: Validate JSON --------------------
 - stage: Validate
+  displayName: Validate API JSON
   jobs:
   - job: ValidateJSON
     steps:
     - checkout: self
 
-    - script: bash scripts/validate-json.sh
-      displayName: Validate API JSON format
+    - script: |
+        echo "Validating JSON files in ./apis ..."
+        for f in apis/*.json; do
+          echo "Checking $f"
+          jq empty "$f"
+        done
+      displayName: Validate JSON files
 
-# ---------------- Stage 2 Convert JSON → YAML ----------------
+
+# -------------------- Stage 2: Convert JSON to YAML --------------------
 - stage: Convert
   dependsOn: Validate
   jobs:
@@ -24,58 +31,73 @@ stages:
     steps:
     - checkout: self
 
-    - script: bash scripts/convert-json-to-yaml.sh
+    - script: |
+        mkdir -p converted-apis
+        echo "Converting JSON → YAML ..."
+        for f in apis/*.json; do
+          name=$(basename "$f" .json)
+          echo "Converting $name"
+          yq eval -P "$f" > "converted-apis/$name.yaml"
+        done
+    - publish: converted-apis
+      artifact: converted-apis
+      displayName: Publish converted YAML
       displayName: Convert JSON to YAML
 
-    - publish: apis
-      artifact: converted-apis
 
-# ---------------- Stage 3 Upgrade to Kong 3.x ----------------
+# -------------------- Stage 3: Upgrade decK format to Kong 3.x --------------------
 - stage: Upgrade
   dependsOn: Convert
   jobs:
   - job: UpgradeFormat
     steps:
+
+    # download converted YAML from Stage 2
     - download: current
       artifact: converted-apis
 
     - script: |
+        echo "Artifact path is:"
+        echo "$(Pipeline.Workspace)"
+        ls -R "$(Pipeline.Workspace)"
+
         mkdir -p upgraded-apis
-        echo "Upgrading all YAML files to Kong 3.x format..."
-        for f in converted-apis/*.yaml; do
+
+        echo "Upgrading YAML files to Kong 3.x format..."
+        for f in "$(Pipeline.Workspace)"/converted-apis/*.yaml; do
           name=$(basename "$f")
+          echo "Upgrading $name"
           deck file convert \
             --from kong-gateway-2.x \
             --to kong-gateway-3.x \
             --input-file "$f" \
             --output-file "upgraded-apis/$name"
         done
-
       displayName: Upgrade configuration to Kong 3.x
 
     - publish: upgraded-apis
       artifact: upgraded-apis
+      displayName: Publish upgraded configs
 
-# ---------------- Stage 4 Deploy to Kong Gateway ----------------
+
+# -------------------- Stage 4: Deploy to Kong --------------------
 - stage: Deploy
   dependsOn: Upgrade
   jobs:
   - job: DeployToKong
     steps:
+
+    # download upgraded YAML from Stage 3
     - download: current
       artifact: upgraded-apis
 
     - script: |
-        echo "Listing files to deploy:"
-        ls -l upgraded-apis
+        echo "Files ready for deployment:"
+        ls -l "$(Pipeline.Workspace)/upgraded-apis"
 
-        echo "Testing connection to Kong..."
+        echo "Pinging Kong..."
         deck gateway ping
 
-        echo "Deploying APIs to Kong Gateway..."
-        for f in upgraded-apis/*.yaml; do
-          echo "Deploying $f"
-          deck gateway sync "$f"
-        done
-
+        echo "Deploying APIs to Kong using decK..."
+        deck gateway sync "$(Pipeline.Workspace)/upgraded-apis"
       displayName: Deploy APIs to Kong using decK
