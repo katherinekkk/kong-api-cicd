@@ -8,7 +8,7 @@
   "routes": [
     {
       "name": "demo-route",
-      "service": "demo-service",
+      "service": { "name": "demo-service" },
       "paths": ["/demo"]
     }
   ]
