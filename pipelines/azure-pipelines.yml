@@ -2,22 +2,23 @@ trigger:
 - main
 
 pool:
-  name: Default   # self-hosted agent
+  name: Default      # your self-hosted agent
 
 stages:
 
-# ---------- Stage 1 Validate ----------
+# ---------- Stage 1: Validate ----------
 - stage: Validate
   jobs:
   - job: ValidateJSON
     steps:
     - checkout: self
 
-    - script: bash scripts/validate-json.sh
-      displayName: Validate JSON
+    - script: |
+        bash scripts/validate-json.sh
+      displayName: Validate JSON spec
 
 
-# ---------- Stage 2 Convert ----------
+# ---------- Stage 2: Convert JSON → YAML ----------
 - stage: Convert
   dependsOn: Validate
   jobs:
@@ -25,40 +26,49 @@ stages:
     steps:
     - checkout: self
 
-    - script: bash scripts/convert-json-to-yaml.sh
+    - script: |
+        bash scripts/convert-json-to-yaml.sh
+        ls -R apis
       displayName: Convert JSON to YAML
 
-    # publish converted YAML so next stage can use it
+    # publish YAML output (apis/*.yaml)
     - publish: apis
       artifact: converted-apis
 
 
-# ---------- Stage 3 Upgrade to Kong 3.x ----------
+# ---------- Stage 3: Upgrade YAML to Kong 3.x ----------
 - stage: Upgrade
   dependsOn: Convert
   jobs:
-  - job: UpgradeDeckFormat
+  - job: UpgradeDecK
     steps:
     - checkout: self
 
-    # download artifact from previous stage
+    # download YAML from previous stage
     - download: current
       artifact: converted-apis
 
     - script: |
-        echo "Upgrading config to Kong 3.x format"
+        echo "Upgrading config to Kong 3.x"
 
-        # convert old 2.x → 3.x format
+        ls -R $(Pipeline.Workspace)/converted-apis
+
         deck file convert \
           --from kong-gateway-2.x \
           --to kong-gateway-3.x \
-          apis/demo-api.yaml > apis/demo-api-3x.yaml
+          $(Pipeline.Workspace)/converted-apis/demo-api.yaml \
+          > $(Pipeline.Workspace)/converted-apis/demo-api-3x.yaml
 
-        echo "Converted file created: apis/demo-api-3x.yaml"
-      displayName: Upgrade decK format to Kong 3.x
+        echo "Converted file created:"
+        ls -l $(Pipeline.Workspace)/converted-apis
+      displayName: Upgrade decK file format to Kong 3.x
+
+    # publish upgraded spec
+    - publish: $(Pipeline.Workspace)/converted-apis
+      artifact: upgraded-apis
 
 
-# ---------- Stage 4 Deploy ----------
+# ---------- Stage 4: Deploy to Kong ----------
 - stage: Deploy
   dependsOn: Upgrade
   jobs:
@@ -66,7 +76,17 @@ stages:
     steps:
     - checkout: self
 
+    # download upgraded artifact
+    - download: current
+      artifact: upgraded-apis
+
     - script: |
-        echo "Deploying upgraded API spec to Kong Gateway..."
-        deck gateway sync apis/demo-api-3x.yaml
+        echo "Available files:"
+        ls -R $(Pipeline.Workspace)/upgraded-apis
+
+        echo "Pinging Kong..."
+        deck gateway ping
+
+        echo "Deploying API to Kong Gateway..."
+        deck gateway sync $(Pipeline.Workspace)/upgraded-apis/demo-api-3x.yaml
       displayName: Deploy APIs to Kong using decK
