@@ -32,7 +32,7 @@ stages:
     # Upgrade decK format to Kong 3.x
     - script: |
         echo "Upgrading config to Kong 3.x format"
-        deck convert \
+        deck file convert \
           --from kong-gateway-2.x \
           --to kong-gateway-3.x \
           --input-file apis/demo-api.yaml \
