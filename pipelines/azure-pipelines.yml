@@ -89,12 +89,18 @@ stages:
       artifact: upgraded-apis
 
     - script: |
-        echo "Files being deployed:"
-        ls -l "$(Pipeline.Workspace)/upgraded-apis"
+        set -e
 
-        echo "Testing connectivity"
+        echo "Files for deployment:"
+        ls -1 "$(Pipeline.Workspace)/upgraded-apis"
+
+        echo "Pinging Kong..."
         deck gateway ping
 
-        echo "Deploying upgraded config"
-        deck gateway sync "$(Pipeline.Workspace)/upgraded-apis"
+        echo "Deploying ONLY 3.x YAML files..."
+        for f in "$(Pipeline.Workspace)"/upgraded-apis/*-3x.yaml; do
+          echo "Deploying $f"
+          deck gateway sync "$f"
+        done
       displayName: Deploy APIs using decK
+
