@@ -2,85 +2,108 @@ trigger:
 - main
 
 pool:
-  name: Default   # self-hosted linux agent
+  name: Default    # your self-hosted agent
 
 stages:
 
-# ---------- Stage 1: Validate ----------
+# ---------------------- 1) VALIDATE JSON ----------------------
 - stage: Validate
+  displayName: Validate JSON APIs
   jobs:
   - job: ValidateJSON
     steps:
     - checkout: self
 
-    - script: bash scripts/validate-json.sh
-      displayName: Validate API JSON
+    - script: |
+        echo "Running JSON validation..."
+        bash scripts/validate-json.sh
+      displayName: Validate JSON files
 
 
-# ---------- Stage 2: Convert JSON → YAML ----------
+# ---------------------- 2) CONVERT JSON TO YAML ----------------------
 - stage: Convert
   dependsOn: Validate
+  displayName: Convert JSON → YAML
   jobs:
   - job: ConvertToYAML
     steps:
     - checkout: self
 
-    - script: bash scripts/convert-json-to-yaml.sh
+    - script: |
+        echo "Converting JSON to YAML..."
+        bash scripts/convert-json-to-yaml.sh
       displayName: Convert JSON to YAML
 
     - publish: apis
       artifact: converted-apis
+      displayName: Publish converted APIs
 
 
-# ---------- Stage 3: Upgrade to Kong 3.x ----------
+# ---------------------- 3) UPGRADE FORMAT TO KONG 3.X ----------------------
 - stage: Upgrade
   dependsOn: Convert
+  displayName: Upgrade to Kong 3.x format
   jobs:
-  - job: UpgradeDeckFormat
+  - job: UpgradeConfig
     steps:
+    - checkout: self
+
     - download: current
       artifact: converted-apis
 
     - script: |
+        echo "Creating upgraded-apis directory..."
         mkdir upgraded-apis
+
+        echo "Upgrading all YAML files to Kong 3.x format..."
+
         for f in $(Pipeline.Workspace)/converted-apis/*.yaml; do
-          name=$(basename $f .yaml)
-          echo "Upgrading $name to Kong 3.x format"
-          deck file convert --from kong-gateway-2.x --to kong-gateway-3.x \
-            $f > upgraded-apis/${name}-3x.yaml
+          base=$(basename "$f" .yaml)
+
+          echo "Upgrading $base"
+
+          deck file convert \
+            --from kong-gateway-2.x \
+            --to kong-gateway-3.x \
+            --input-file "$f" \
+            --output-file upgraded-apis/${base}-3x.yaml
+
+          # ensure workspace exists (fixes empty config error)
+          if ! grep -q "_workspace" upgraded-apis/${base}-3x.yaml; then
+            echo "Adding workspace default to ${base}-3x.yaml"
+            echo "_workspace: default" | cat - upgraded-apis/${base}-3x.yaml > tmp && mv tmp upgraded-apis/${base}-3x.yaml
+          fi
+
         done
-      displayName: Upgrade decK format to Kong 3.x
+
+        echo "Final upgraded files:"
+        ls -l upgraded-apis
+      displayName: Upgrade decK config to Kong 3.x
 
     - publish: upgraded-apis
       artifact: upgraded-apis
+      displayName: Publish upgraded APIs
 
 
-# ---------- Stage 4: Deploy to Kong ----------
+# ---------------------- 4) DEPLOY TO KONG USING DECK ----------------------
 - stage: Deploy
   dependsOn: Upgrade
+  displayName: Deploy to Kong Gateway
   jobs:
   - job: DeployToKong
     steps:
+    - checkout: self
+
     - download: current
       artifact: upgraded-apis
 
     - script: |
-        echo "Available files:"
-        ls -R $(Pipeline.Workspace)/upgraded-apis
+        echo "Available files for deployment:"
+        ls -l $(Pipeline.Workspace)/upgraded-apis
 
-        FILE=$(Pipeline.Workspace)/upgraded-apis/demo-api-3x.yaml
-
-        echo "Ensuring workspace exists in file..."
-        if ! grep -q "_workspace" "$FILE"; then
-          echo "_workspace: default" | cat - "$FILE" > temp && mv temp "$FILE"
-        fi
-
-        echo "Final file content:"
-        cat "$FILE"
-
-        echo "Checking Kong connectivity..."
+        echo "Testing deck connection..."
         deck gateway ping
 
-        echo "Deploying to Kong..."
-        deck gateway sync --workspace default "$FILE"
+        echo "Deploying using deck gateway sync..."
+        deck gateway sync $(Pipeline.Workspace)/upgraded-apis
       displayName: Deploy APIs to Kong using decK
