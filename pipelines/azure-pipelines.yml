@@ -1,25 +1,43 @@
 trigger:
-  branches:
-    include:
-      - main
+- main
 
 pool:
-  vmImage: ubuntu-latest
+  name: Default   # self-hosted agent
 
 stages:
+
+# ---------- Stage 1 Validate ----------
 - stage: Validate
   jobs:
   - job: ValidateJSON
     steps:
-    - script: sudo apt-get update && sudo apt-get install -y jq
-    - script: bash scripts/validate-json.sh
+    - checkout: self
 
+    - script: bash scripts/validate-json.sh
+      displayName: Validate JSON
+
+# ---------- Stage 2 Convert ----------
 - stage: Convert
   dependsOn: Validate
   jobs:
   - job: ConvertToYAML
     steps:
-    - script: sudo apt-get update && sudo apt-get install -y yq
+    - checkout: self
+
     - script: bash scripts/convert-json-to-yaml.sh
-    - publish: output
-      artifact: kong-yaml
+      displayName: Convert JSON to YAML
+
+    - publish: apis
+      artifact: converted-apis
+
+# ---------- Stage 3 Deploy ----------
+- stage: Deploy
+  dependsOn: Convert
+  jobs:
+  - job: DeployToKong
+    steps:
+    - checkout: self
+
+    - script: |
+        deck sync --state apis/
+      displayName: Deploy APIs to Kong using decK
